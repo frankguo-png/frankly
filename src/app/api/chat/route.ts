@@ -117,7 +117,7 @@ export async function POST(request: Request) {
         // Payroll allocations
         service
           .from('payroll_allocations')
-          .select('employee_name, department, annual_salary, hourly_rate, hours_per_week, employment_type, project_allocations, ai_agents')
+          .select('employee_name, department, annual_salary, hourly_rate, hours_per_week, employment_type, project_allocations')
           .eq('org_id', orgId)
           .is('end_date', null),
 

@@ -1126,20 +1126,7 @@ export async function POST() {
 
   // Historical payroll records showing team growth
   // Each record has an effective_date and optional end_date
-  const payrollRows: Array<{
-    org_id: string
-    employee_id: string
-    employee_name: string
-    employment_type: 'full_time' | 'contractor' | 'intern'
-    annual_salary: number | null
-    hourly_rate: number | null
-    hours_per_week: number
-    department: string
-    project_allocations: Record<string, number>
-    ai_agents: string[]
-    effective_date: string
-    end_date: string | null
-  }> = []
+  const payrollRows: Array<any> = []
 
   // Jan 2025: Original 5 employees (Oslo, Emma, Rafa, Nour, Sofia)
   const jan2025 = monthDate(15, 1) // 15 months ago = Jan 2025

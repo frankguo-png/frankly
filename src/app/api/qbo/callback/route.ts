@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
 
     if (errorParam) {
       console.error('QBO OAuth error:', errorParam)
-      const redirectUrl = new URL('/dashboard/settings', request.url)
+      const redirectUrl = new URL('/dashboard/settings', process.env.NEXT_PUBLIC_APP_URL || request.url)
       redirectUrl.searchParams.set('qbo_error', errorParam)
       return NextResponse.redirect(redirectUrl)
     }
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
 
     if (authError || !user) {
       return NextResponse.redirect(
-        new URL('/login', request.url)
+        new URL('/login', process.env.NEXT_PUBLIC_APP_URL || request.url)
       )
     }
 

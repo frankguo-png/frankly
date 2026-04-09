@@ -1,0 +1,339 @@
+'use client'
+
+import { useEffect, useState, useCallback, Suspense, useMemo } from 'react'
+import { Info } from 'lucide-react'
+import { formatCompactCurrency } from '@/lib/utils/currency'
+import type { AgentMetric, AgentMetricsResponse } from '@/lib/kpi/agent-roi'
+
+type SortKey = 'cost' | 'roi' | 'name'
+
+function SummaryCardSkeleton() {
+  return (
+    <div className="rounded-xl border border-[rgba(255,255,255,0.06)] bg-[#111d2e]/80 backdrop-blur-sm p-5">
+      <div className="h-3 w-24 rounded animate-shimmer mb-3" />
+      <div className="h-7 w-32 rounded animate-shimmer" />
+    </div>
+  )
+}
+
+function SummaryCard({
+  label,
+  value,
+  subtext,
+}: {
+  label: string
+  value: string
+  subtext?: string
+}) {
+  return (
+    <div className="rounded-xl border border-[rgba(255,255,255,0.06)] bg-[#111d2e]/80 backdrop-blur-sm p-5">
+      <p className="text-xs font-medium text-[#7b8fa3] uppercase tracking-wider mb-1">
+        {label}
+      </p>
+      <p className="text-xl font-semibold text-[#e8edf4] tabular-nums">{value}</p>
+      {subtext && (
+        <p className="text-xs text-[#7b8fa3] mt-1">{subtext}</p>
+      )}
+    </div>
+  )
+}
+
+function Sparkline({ data, className }: { data: number[]; className?: string }) {
+  if (data.length === 0 || data.every((d) => d === 0)) {
+    return <div className={`h-8 w-20 ${className ?? ''}`} />
+  }
+
+  const max = Math.max(...data)
+  const min = Math.min(...data)
+  const range = max - min || 1
+  const height = 32
+  const width = 80
+  const padding = 2
+
+  const points = data.map((val, i) => {
+    const x = padding + (i / (data.length - 1)) * (width - padding * 2)
+    const y = height - padding - ((val - min) / range) * (height - padding * 2)
+    return `${x},${y}`
+  })
+
+  const isUp = data[data.length - 1] >= data[0]
+
+  return (
+    <svg width={width} height={height} className={className}>
+      <polyline
+        points={points.join(' ')}
+        fill="none"
+        stroke={isUp ? '#f59e0b' : '#3b82f6'}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {data.map((val, i) => {
+        const x = padding + (i / (data.length - 1)) * (width - padding * 2)
+        const y = height - padding - ((val - min) / range) * (height - padding * 2)
+        return (
+          <circle
+            key={i}
+            cx={x}
+            cy={y}
+            r="2.5"
+            fill={isUp ? '#f59e0b' : '#3b82f6'}
+          />
+        )
+      })}
+    </svg>
+  )
+}
+
+function AgentCard({ agent }: { agent: AgentMetric }) {
+  const isPositiveRoi = agent.roi >= 0
+  const isLive = agent.status === 'active'
+
+  return (
+    <div className="rounded-xl border border-[rgba(255,255,255,0.06)] bg-[#111d2e]/80 backdrop-blur-sm p-5 hover:border-[rgba(255,255,255,0.1)] transition-all duration-200">
+      {/* Header: name + project badge */}
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-2.5">
+          {/* Status dot */}
+          <div
+            className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${
+              isLive
+                ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]'
+                : 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.4)]'
+            }`}
+          />
+          <h3 className="text-sm font-semibold text-[#e8edf4]">{agent.name}</h3>
+        </div>
+        <span className="inline-flex items-center rounded-md bg-[#1a2942] px-2 py-0.5 text-[10px] font-medium text-[#7b8fa3] tracking-wide uppercase">
+          {agent.project}
+        </span>
+      </div>
+
+      {/* Monthly cost - large number */}
+      <div className="mb-3">
+        <p className="text-xs text-[#7b8fa3] mb-0.5">Monthly Cost</p>
+        <p className="text-2xl font-bold text-[#e8edf4] tabular-nums">
+          {formatCompactCurrency(agent.monthlyCost)}
+        </p>
+      </div>
+
+      {/* Sparkline + ROI row */}
+      <div className="flex items-end justify-between">
+        <div>
+          <p className="text-[10px] text-[#7b8fa3] mb-1 uppercase tracking-wider">3-mo trend</p>
+          <Sparkline data={agent.costTrend} />
+        </div>
+        <div className="text-right">
+          <div className="flex items-center gap-1 mb-1">
+            <p className="text-[10px] text-[#7b8fa3] uppercase tracking-wider">ROI</p>
+            <div className="group/tooltip relative flex items-center">
+              <Info className="h-3 w-3 text-[#5a6d82] cursor-help" />
+              <div className="invisible opacity-0 group-hover/tooltip:visible group-hover/tooltip:opacity-100 transition-all duration-200 absolute bottom-full right-0 mb-2 z-50 pointer-events-none">
+                <div className="relative bg-[#0a1628] text-[#c8d5e3] text-xs leading-relaxed rounded-lg shadow-[0_4px_20px_rgba(0,0,0,0.5)] px-3 py-2 max-w-[240px] w-max border border-[rgba(255,255,255,0.08)]">
+                  Return on Investment — calculated as (revenue or savings generated by this agent) divided by (total cost of running this agent). Values above 1.0x mean the agent generates more value than it costs.
+                  <div className="absolute top-full right-3 border-[5px] border-transparent border-t-[#0a1628]" />
+                </div>
+              </div>
+            </div>
+          </div>
+          <p
+            className={`text-lg font-bold tabular-nums ${
+              isPositiveRoi ? 'text-emerald-400' : 'text-red-400'
+            }`}
+          >
+            {isPositiveRoi ? '+' : ''}
+            {agent.roi.toFixed(0)}%
+          </p>
+        </div>
+      </div>
+
+      {/* Status label */}
+      <div className="mt-3 pt-3 border-t border-[rgba(255,255,255,0.04)]">
+        <span
+          className={`inline-flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider ${
+            isLive ? 'text-emerald-400' : 'text-amber-400'
+          }`}
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${
+              isLive ? 'bg-emerald-400' : 'bg-amber-400'
+            }`}
+          />
+          {isLive ? 'Live' : 'Dev'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function AgentsContent() {
+  const [data, setData] = useState<AgentMetricsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [sortBy, setSortBy] = useState<SortKey>('cost')
+
+  const loadAgents = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/agents')
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `HTTP ${res.status}`)
+      }
+      const json: AgentMetricsResponse = await res.json()
+      setData(json)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load agent metrics')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadAgents()
+  }, [loadAgents])
+
+  const sortedAgents = useMemo(() => {
+    if (!data) return []
+    const agents = [...data.agents]
+    switch (sortBy) {
+      case 'cost':
+        return agents.sort((a, b) => b.monthlyCost - a.monthlyCost)
+      case 'roi':
+        return agents.sort((a, b) => b.roi - a.roi)
+      case 'name':
+        return agents.sort((a, b) => a.name.localeCompare(b.name))
+      default:
+        return agents
+    }
+  }, [data, sortBy])
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-[#e8edf4]">Agents</h1>
+          <p className="mt-1 text-sm text-[#7b8fa3]">
+            Track the cost and ROI of AI agents deployed across projects.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SummaryCardSkeleton key={i} />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="rounded-xl border border-[rgba(255,255,255,0.06)] bg-[#111d2e]/80 backdrop-blur-sm p-5 h-48 animate-shimmer"
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-[#e8edf4]">Agents</h1>
+          <p className="mt-1 text-sm text-[#7b8fa3]">
+            Track the cost and ROI of AI agents deployed across projects.
+          </p>
+        </div>
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <p className="text-red-400 text-sm mb-3">{error}</p>
+          <button onClick={() => loadAgents()} className="text-xs text-blue-400 hover:text-blue-300 underline">
+            Try again
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (!data) return null
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-[#e8edf4]">Agents</h1>
+        <p className="mt-1 text-sm text-[#7b8fa3]">
+          Track the cost and ROI of AI agents deployed across projects.
+        </p>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard
+          label="Total Agent Spend"
+          value={formatCompactCurrency(data.summary.totalAgentSpend)}
+          subtext="All-time across all agents"
+        />
+        <SummaryCard
+          label="Average ROI"
+          value={`${data.summary.avgRoi >= 0 ? '+' : ''}${data.summary.avgRoi.toFixed(0)}%`}
+          subtext="Across all deployed agents"
+        />
+        <SummaryCard
+          label="Active Agents"
+          value={String(data.summary.activeCount)}
+          subtext="Live in production"
+        />
+        <SummaryCard
+          label="In Development"
+          value={String(data.summary.devCount)}
+          subtext="Currently being built"
+        />
+      </div>
+
+      {/* Sort controls */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-[#7b8fa3] font-medium">Sort by:</span>
+        {(['cost', 'roi', 'name'] as SortKey[]).map((key) => (
+          <button
+            key={key}
+            onClick={() => setSortBy(key)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+              sortBy === key
+                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                : 'text-[#5a6d82] hover:text-[#9baab8] hover:bg-white/[0.02] border border-transparent'
+            }`}
+          >
+            {key === 'cost' ? 'Cost' : key === 'roi' ? 'ROI' : 'Name'}
+          </button>
+        ))}
+      </div>
+
+      {/* Agent cards grid */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {sortedAgents.map((agent) => (
+          <AgentCard key={agent.name} agent={agent} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export default function AgentsPage() {
+  return (
+    <div className="animate-fade-in">
+      <Suspense
+        fallback={
+          <div className="space-y-6">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight text-[#e8edf4]">Agents</h1>
+              <p className="mt-1 text-sm text-[#7b8fa3]">
+                Track the cost and ROI of AI agents deployed across projects.
+              </p>
+            </div>
+          </div>
+        }
+      >
+        <AgentsContent />
+      </Suspense>
+    </div>
+  )
+}

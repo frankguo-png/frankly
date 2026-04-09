@@ -1,7 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  compress: true,
+  images: {
+    formats: ['image/webp'],
+  },
+  experimental: {
+    optimizePackageImports: ['recharts', '@xyflow/react', 'lucide-react', 'date-fns'],
+  },
 };
 
 export default nextConfig;

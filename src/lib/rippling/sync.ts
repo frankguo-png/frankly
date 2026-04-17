@@ -1,4 +1,4 @@
-import { getWorkers, getPayrollRuns, type RipplingWorker } from './client'
+import { getWorkers, getPayrollRuns, getWorkerName, getWorkerDepartment, getWorkerCompensation, getWorkerEmploymentType, type RipplingWorker } from './client'
 import { createServiceClient } from '@/lib/supabase/server'
 
 // ---------------------------------------------------------------------------
@@ -15,11 +15,8 @@ type EmploymentType =
 function mapEmploymentType(
   worker: RipplingWorker
 ): EmploymentType | null {
-  const raw = (
-    worker.employment_type ??
-    worker.employmentType ??
-    ''
-  ).toUpperCase()
+  const rawType = getWorkerEmploymentType(worker)
+  const raw = (rawType ?? '').toUpperCase()
 
   switch (raw) {
     case 'EMPLOYEE':
@@ -80,8 +77,9 @@ export async function syncRipplingEmployees(orgId: string) {
     for (const worker of workers) {
       activeWorkerIds.add(worker.id)
 
-      const fullName = `${worker.firstName} ${worker.lastName}`.trim()
-      const dept = worker.department?.name ?? null
+      const fullName = getWorkerName(worker)
+      const dept = getWorkerDepartment(worker)
+      const salary = getWorkerCompensation(worker)
 
       const { error } = await supabase
         .from('payroll_allocations')
@@ -91,7 +89,7 @@ export async function syncRipplingEmployees(orgId: string) {
             employee_id: worker.id,
             employee_name: fullName,
             employment_type: mapEmploymentType(worker),
-            annual_salary: worker.compensation?.amount ?? null,
+            annual_salary: salary,
             department: dept,
             project_allocations: [],
             effective_date: todayISO(),
@@ -110,7 +108,7 @@ export async function syncRipplingEmployees(orgId: string) {
       }
 
       // Also upsert into employees table (for org chart, reviews, bonuses)
-      const isActive = !worker.endDate || worker.endDate > todayISO()
+      const isActive = worker.status === 'ACTIVE' || !worker.end_date
       const { error: empError } = await supabase
         .from('employees')
         .upsert(
@@ -120,10 +118,10 @@ export async function syncRipplingEmployees(orgId: string) {
             name: fullName,
             title: null,
             department: dept,
-            email: null,
+            email: worker.work_email ?? null,
             status: isActive ? 'active' : 'inactive',
-            start_date: worker.startDate ?? null,
-            salary: worker.compensation?.amount ?? null,
+            start_date: worker.start_date ?? null,
+            salary: salary,
           },
           { onConflict: 'id' }
         )
@@ -228,14 +226,18 @@ export async function syncRipplingPayroll(orgId: string) {
     const payrollRuns = await getPayrollRuns(startDate, endDate)
 
     for (const run of payrollRuns) {
+      const runDate = run.run_date || run.runDate || run.pay_date || run.payDate || endDate
+      const totalAmt = run.total_amount ?? run.totalAmount ?? 0
+      const pStart = run.period_start ?? run.periodStart
+      const pEnd = run.period_end ?? run.periodEnd
       const { error } = await supabase.from('transactions').upsert(
         {
           org_id: orgId,
-          date: run.runDate || run.payDate || endDate,
-          amount: -Math.abs(run.totalAmount),
+          date: runDate,
+          amount: -Math.abs(totalAmt),
           vendor: 'Rippling Payroll',
           category: 'Payroll',
-          description: `Payroll run ${run.id}${run.periodStart && run.periodEnd ? ` (${run.periodStart} - ${run.periodEnd})` : ''}`,
+          description: `Payroll run ${run.id}${pStart && pEnd ? ` (${pStart} - ${pEnd})` : ''}`,
           source: 'rippling' as const,
           source_transaction_id: `payroll_run_${run.id}`,
         },

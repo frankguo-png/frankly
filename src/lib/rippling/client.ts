@@ -3,20 +3,44 @@ const RIPPLING_API_URL =
 const RIPPLING_API_KEY = process.env.RIPPLING_API_KEY
 
 // ---------------------------------------------------------------------------
-// Types
+// Types (matching Rippling Platform API spec)
 // ---------------------------------------------------------------------------
 
 export interface RipplingWorker {
   id: string
-  firstName: string
-  lastName: string
-  department?: { name: string } | null
-  employment_type?: string | null
+  user_id?: string
+  user?: {
+    id: string
+    name?: { first_name?: string; last_name?: string; preferred_first_name?: string }
+    display_name?: string
+    active?: boolean
+  }
+  manager_id?: string | null
+  status?: string // INIT, HIRED, ACCEPTED, ACTIVE, TERMINATED
+  start_date?: string | null
+  end_date?: string | null
+  work_email?: string | null
+  employment_type_id?: string | null
+  employment_type?: {
+    id: string
+    name?: string // e.g. "Full-Time", "Part-Time", "Contractor"
+  } | null
+  department_id?: string | null
+  department?: {
+    id: string
+    name?: string
+  } | null
+  compensation?: {
+    id: string
+    amount?: number
+    currency?: string
+    pay_frequency?: string
+  } | null
+  // Legacy field names (some Rippling API versions use these)
+  firstName?: string
+  lastName?: string
+  employment_type_legacy?: string | null
   employmentType?: string | null
-  compensation?: { amount: number; currency?: string } | null
-  startDate?: string | null
-  endDate?: string | null
-  status?: string | null
 }
 
 export interface RipplingPayrollRun {
@@ -27,10 +51,18 @@ export interface RipplingPayrollRun {
   status?: string | null
   periodStart?: string | null
   periodEnd?: string | null
+  // Platform API fields
+  run_date?: string
+  pay_date?: string | null
+  total_amount?: number
+  period_start?: string | null
+  period_end?: string | null
 }
 
 interface RipplingPaginatedResponse<T> {
-  data: T[]
+  results?: T[]
+  data?: T[]
+  next_link?: string | null
   next?: string | null
   hasMore?: boolean
 }
@@ -90,7 +122,7 @@ export async function ripplingSafeRequest(
 }
 
 // ---------------------------------------------------------------------------
-// Paginated fetch helper
+// Paginated fetch helper (supports both old and new response formats)
 // ---------------------------------------------------------------------------
 
 async function fetchAllPages<T>(
@@ -100,36 +132,68 @@ async function fetchAllPages<T>(
   const results: T[] = []
   let url = endpoint
 
+  // Ensure trailing slash (Rippling Platform API requires it)
+  if (!url.endsWith('/')) url += '/'
+
   if (params) {
     const qs = new URLSearchParams(params).toString()
-    url = `${endpoint}?${qs}`
+    url = `${url}?${qs}`
   }
 
-  let page = 1
-  const perPage = 100
   let hasMore = true
+  let nextLink: string | null = null
 
   while (hasMore) {
-    const separator = url.includes('?') ? '&' : '?'
-    const pagedUrl = `${url}${separator}limit=${perPage}&offset=${(page - 1) * perPage}`
-
-    const response = await ripplingSafeRequest(pagedUrl)
-    const json = (await response.json()) as
-      | RipplingPaginatedResponse<T>
-      | T[]
+    const fetchUrl = nextLink || url
+    const response = await ripplingSafeRequest(fetchUrl)
+    const json = (await response.json()) as RipplingPaginatedResponse<T> | T[]
 
     if (Array.isArray(json)) {
+      // Old API format: returns array directly
       results.push(...json)
-      hasMore = json.length === perPage
+      hasMore = json.length >= 100
     } else {
-      results.push(...json.data)
-      hasMore = json.hasMore === true || (json.next != null && json.next !== '')
+      // New Platform API format: { results: [...], next_link: "..." }
+      const items = json.results ?? json.data ?? []
+      results.push(...items)
+      nextLink = json.next_link ?? json.next ?? null
+      hasMore = nextLink != null && nextLink !== ''
     }
-
-    page++
   }
 
   return results
+}
+
+// ---------------------------------------------------------------------------
+// Helper: extract name from worker (handles both API formats)
+// ---------------------------------------------------------------------------
+
+export function getWorkerName(worker: RipplingWorker): string {
+  // Platform API: user.name or user.display_name
+  if (worker.user?.display_name) return worker.user.display_name
+  if (worker.user?.name) {
+    const first = worker.user.name.preferred_first_name || worker.user.name.first_name || ''
+    const last = worker.user.name.last_name || ''
+    const name = `${first} ${last}`.trim()
+    if (name) return name
+  }
+  // Legacy API fields
+  if (worker.firstName || worker.lastName) {
+    return `${worker.firstName ?? ''} ${worker.lastName ?? ''}`.trim()
+  }
+  return 'Unknown'
+}
+
+export function getWorkerDepartment(worker: RipplingWorker): string | null {
+  return worker.department?.name ?? null
+}
+
+export function getWorkerCompensation(worker: RipplingWorker): number | null {
+  return worker.compensation?.amount ?? null
+}
+
+export function getWorkerEmploymentType(worker: RipplingWorker): string | null {
+  return worker.employment_type?.name ?? worker.employmentType ?? worker.employment_type_legacy ?? null
 }
 
 // ---------------------------------------------------------------------------
@@ -137,8 +201,8 @@ async function fetchAllPages<T>(
 // ---------------------------------------------------------------------------
 
 export async function getWorkers(): Promise<RipplingWorker[]> {
-  return fetchAllPages<RipplingWorker>('/workers', {
-    expand: 'department,employment_type',
+  return fetchAllPages<RipplingWorker>('/workers/', {
+    expand: 'user,department,employment_type,compensation',
   })
 }
 
@@ -146,8 +210,14 @@ export async function getPayrollRuns(
   startDate: string,
   endDate: string
 ): Promise<RipplingPayrollRun[]> {
-  return fetchAllPages<RipplingPayrollRun>('/payroll_runs', {
-    start_date: startDate,
-    end_date: endDate,
-  })
+  try {
+    return await fetchAllPages<RipplingPayrollRun>('/payroll-runs/', {
+      start_date: startDate,
+      end_date: endDate,
+    })
+  } catch (err) {
+    // Payroll endpoint may not be available on all tiers
+    console.warn('Failed to fetch payroll runs:', err)
+    return []
+  }
 }

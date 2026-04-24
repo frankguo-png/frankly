@@ -16,7 +16,9 @@ export async function POST(request: NextRequest) {
       user: { client_user_id: user.id },
       client_name: 'Ampliwork Dashboard',
       products: [Products.Transactions],
-      country_codes: [CountryCode.Us],
+      // GB not currently enabled on our Plaid account — request product access in the Plaid
+      // dashboard if we add UK banking. Wise's US account connects through US anyway.
+      country_codes: [CountryCode.Us, CountryCode.Ca],
       language: 'en',
     })
 

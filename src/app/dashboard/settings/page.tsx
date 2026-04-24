@@ -2,11 +2,11 @@
 
 import { useState } from 'react'
 import { useSWRConfig } from 'swr'
-import { ConnectionStatus } from '@/components/settings/connection-status'
 import { PlaidLinkButton } from '@/components/settings/plaid-link-button'
 import { QboConnectButton } from '@/components/settings/qbo-connect-button'
 import { RipplingConnectButton } from '@/components/settings/rippling-connect-button'
 import { EntityManager } from '@/components/settings/entity-manager'
+import { BankAccountsManager } from '@/components/settings/bank-accounts-manager'
 import { toast } from 'sonner'
 import { Loader2, Sparkles, Trash2, AlertTriangle } from 'lucide-react'
 
@@ -70,7 +70,7 @@ export default function SettingsPage() {
             Connect your bank accounts to automatically import transactions.
           </p>
           <div className="mt-4 space-y-4">
-            <ConnectionStatus />
+            <BankAccountsManager />
             <PlaidLinkButton />
           </div>
         </div>

@@ -215,16 +215,16 @@ export function CurrencyWidget() {
                     {CURRENCY_SYMBOLS[account.currency] ?? account.currency}
                   </div>
                   <div className="min-w-0">
+                    {/* Primary: bank name. Secondary: account name (only if different from bank). */}
                     <p className="text-sm font-medium text-[#c8d5e4] truncate">
-                      {account.accountName}
+                      {account.bankName || account.accountName}
                     </p>
                     <p className="text-[11px] text-[#7b8fa3] truncate">
-                      {account.bankName}
-
-                      {isNonUsd && (
-                        <span className="ml-1.5 text-[#5a6d82]">
-                          {account.currency}
-                        </span>
+                      {account.accountName && account.accountName !== account.bankName
+                        ? account.accountName
+                        : account.currency}
+                      {account.accountName && account.accountName !== account.bankName && (
+                        <span className="ml-1.5 text-[#5a6d82]">{account.currency}</span>
                       )}
                     </p>
                   </div>

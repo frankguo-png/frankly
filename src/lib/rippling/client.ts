@@ -20,10 +20,21 @@ export interface RipplingWorker {
   start_date?: string | null
   end_date?: string | null
   work_email?: string | null
+  personal_email?: string | null
+  title?: string | null
+  country?: string | null
+  is_manager?: boolean
+  location?: {
+    type?: string // WORK | REMOTE
+    work_location_id?: string | null
+  } | null
   employment_type_id?: string | null
   employment_type?: {
     id: string
-    name?: string // e.g. "Full-Time", "Part-Time", "Contractor"
+    name?: string          // SALARIED_FT, SALARIED_PT, HOURLY, CONTRACTOR, INTERN
+    label?: string         // Human-readable (e.g. "Salaried, full-time")
+    type?: string          // EMPLOYEE, CONTRACTOR, INTERN
+    amount_worked?: string // FULL-TIME, PART-TIME
   } | null
   department_id?: string | null
   department?: {
@@ -32,31 +43,17 @@ export interface RipplingWorker {
   } | null
   compensation?: {
     id: string
-    amount?: number
-    currency?: string
-    pay_frequency?: string
+    annual_compensation?: { currency_type?: string; value?: number } | null
+    monthly_compensation?: { currency_type?: string; value?: number } | null
+    weekly_compensation?: { currency_type?: string; value?: number } | null
+    hourly_wage?: { currency_type?: string; value?: number } | null
+    salary_effective_date?: string | null
   } | null
   // Legacy field names (some Rippling API versions use these)
   firstName?: string
   lastName?: string
   employment_type_legacy?: string | null
   employmentType?: string | null
-}
-
-export interface RipplingPayrollRun {
-  id: string
-  runDate: string
-  payDate?: string | null
-  totalAmount: number
-  status?: string | null
-  periodStart?: string | null
-  periodEnd?: string | null
-  // Platform API fields
-  run_date?: string
-  pay_date?: string | null
-  total_amount?: number
-  period_start?: string | null
-  period_end?: string | null
 }
 
 interface RipplingPaginatedResponse<T> {
@@ -189,11 +186,33 @@ export function getWorkerDepartment(worker: RipplingWorker): string | null {
 }
 
 export function getWorkerCompensation(worker: RipplingWorker): number | null {
-  return worker.compensation?.amount ?? null
+  const annual = worker.compensation?.annual_compensation?.value
+  if (typeof annual === 'number') return annual
+  // Fall back to hourly × 40 × 52 if no annual figure
+  const hourly = worker.compensation?.hourly_wage?.value
+  if (typeof hourly === 'number') return hourly * 40 * 52
+  return null
+}
+
+export function getWorkerAnnualSalary(worker: RipplingWorker): number | null {
+  return worker.compensation?.annual_compensation?.value ?? null
+}
+
+export function getWorkerHourlyRate(worker: RipplingWorker): number | null {
+  return worker.compensation?.hourly_wage?.value ?? null
 }
 
 export function getWorkerEmploymentType(worker: RipplingWorker): string | null {
-  return worker.employment_type?.name ?? worker.employmentType ?? worker.employment_type_legacy ?? null
+  const et = worker.employment_type
+  if (!et) return worker.employmentType ?? worker.employment_type_legacy ?? null
+  // Prefer the structured `type` + `amount_worked` fields over the raw `name`
+  if (et.type === 'CONTRACTOR') return 'CONTRACTOR'
+  if (et.type === 'INTERN') return 'INTERN'
+  if (et.type === 'EMPLOYEE') {
+    if (et.amount_worked === 'PART-TIME') return 'PART-TIME'
+    return 'FULL-TIME'
+  }
+  return et.name ?? worker.employmentType ?? worker.employment_type_legacy ?? null
 }
 
 // ---------------------------------------------------------------------------
@@ -201,23 +220,29 @@ export function getWorkerEmploymentType(worker: RipplingWorker): string | null {
 // ---------------------------------------------------------------------------
 
 export async function getWorkers(): Promise<RipplingWorker[]> {
-  return fetchAllPages<RipplingWorker>('/workers/', {
-    expand: 'user,department,employment_type,compensation',
-  })
-}
-
-export async function getPayrollRuns(
-  startDate: string,
-  endDate: string
-): Promise<RipplingPayrollRun[]> {
+  // Try Platform API first (/workers/), fall back to Base API (/employees)
   try {
-    return await fetchAllPages<RipplingPayrollRun>('/payroll-runs/', {
-      start_date: startDate,
-      end_date: endDate,
+    return await fetchAllPages<RipplingWorker>('/workers/', {
+      expand: 'user,department,employment_type,compensation',
     })
   } catch (err) {
-    // Payroll endpoint may not be available on all tiers
-    console.warn('Failed to fetch payroll runs:', err)
-    return []
+    console.warn('Platform API /workers/ failed, trying Base API /employees/:', err)
+    // Base API uses a different host and returns different shape
+    const BASE_API_URL = 'https://api.rippling.com/platform/api'
+    const response = await ripplingSafeRequest(`${BASE_API_URL}/employees`)
+    const employees = await response.json() as any[]
+    return employees.map((emp: any) => ({
+      id: emp.id ?? emp._id,
+      firstName: emp.firstName ?? emp.first_name,
+      lastName: emp.lastName ?? emp.last_name,
+      work_email: emp.workEmail ?? emp.work_email ?? emp.personalEmail,
+      status: emp.status ?? (emp.endDate ? 'TERMINATED' : 'ACTIVE'),
+      start_date: emp.startDate ?? emp.start_date,
+      end_date: emp.endDate ?? emp.end_date ?? emp.terminationDate,
+      department: emp.department ? { id: emp.department, name: emp.departmentName ?? emp.department } : null,
+      employment_type: emp.employmentType ? { id: '', name: emp.employmentType } : null,
+      compensation: emp.compensation ?? (emp.salary ? { amount: emp.salary } : null),
+    }))
   }
 }
+

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 export interface OrgChartNode {
@@ -7,6 +7,8 @@ export interface OrgChartNode {
   title: string | null
   department: string | null
   avatar_url: string | null
+  location_type: string | null
+  is_manager: boolean
   children: OrgChartNode[]
 }
 
@@ -24,9 +26,10 @@ export interface OrgChartResponse {
   newThisMonth: number
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createServerSupabaseClient()
+    const entityId = request.nextUrl.searchParams.get('entityId')
     const {
       data: { user },
       error: authError,
@@ -53,11 +56,13 @@ export async function GET() {
     const orgId = userOrg.org_id
 
     // Fetch all active employees
-    const { data: employees, error: empError } = await supabase
+    let empQuery = supabase
       .from('employees')
-      .select('id, name, title, department, manager_id, avatar_url, salary, start_date')
+      .select('id, name, title, department, manager_id, avatar_url, salary, start_date, location_type, is_manager')
       .eq('org_id', orgId)
       .eq('status', 'active')
+    if (entityId) empQuery = empQuery.eq('entity_id', entityId)
+    const { data: employees, error: empError } = await empQuery
 
     if (empError) {
       return NextResponse.json({ error: empError.message }, { status: 500 })
@@ -74,6 +79,8 @@ export async function GET() {
         title: emp.title,
         department: emp.department,
         avatar_url: emp.avatar_url,
+        location_type: emp.location_type,
+        is_manager: emp.is_manager,
         children: [],
       })
     }

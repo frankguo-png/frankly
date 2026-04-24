@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from 'react'
 import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
-import { Plus, Loader2, Building2 } from 'lucide-react'
+import { Plus, Loader2, Pencil, Trash2 } from 'lucide-react'
 
 interface Entity {
   id: string
@@ -55,6 +55,15 @@ export function EntityManager() {
   const [shortCode, setShortCode] = useState('')
   const [currency, setCurrency] = useState('USD')
   const [color, setColor] = useState(PRESET_COLORS[0])
+
+  // Inline edit state
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editShortCode, setEditShortCode] = useState('')
+  const [editCurrency, setEditCurrency] = useState('USD')
+  const [editColor, setEditColor] = useState(PRESET_COLORS[0])
+  const [editSaving, setEditSaving] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // Fetch QBO connections and bank accounts for entity assignment display
   const [qboConnections, setQboConnections] = useState<QboConnection[]>([])
@@ -121,6 +130,75 @@ export function EntityManager() {
   const getEntityBankAccounts = (entityId: string) =>
     bankAccounts.filter(b => b.entity_id === entityId)
 
+  const startEdit = (entity: Entity) => {
+    setEditingId(entity.id)
+    setEditName(entity.name)
+    setEditShortCode(entity.short_code ?? '')
+    setEditCurrency(entity.currency)
+    setEditColor(entity.color ?? PRESET_COLORS[0])
+  }
+
+  const cancelEdit = () => setEditingId(null)
+
+  const saveEdit = async () => {
+    if (!editingId) return
+    if (!editName.trim()) {
+      toast.error('Entity name is required')
+      return
+    }
+    setEditSaving(true)
+    try {
+      const res = await fetch(`/api/entities/${editingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editName.trim(),
+          short_code: editShortCode.trim() || null,
+          currency: editCurrency,
+          color: editColor,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to update entity')
+      }
+      toast.success('Entity updated')
+      setEditingId(null)
+      mutate()
+      fetchRelated()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update entity')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  const deleteEntity = async (entity: Entity) => {
+    const linkCount =
+      getEntityQboConnections(entity.id).length +
+      getEntityBankAccounts(entity.id).length
+    const warning = linkCount > 0
+      ? `Delete "${entity.name}"? ${linkCount} connection${linkCount === 1 ? '' : 's'} will be left unassigned (they won't be deleted).`
+      : `Delete "${entity.name}"?`
+    if (!confirm(warning)) return
+
+    setDeletingId(entity.id)
+    try {
+      const res = await fetch(`/api/entities/${entity.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to delete entity')
+      }
+      toast.success(`Entity "${entity.name}" deleted`)
+      mutate()
+      fetchRelated()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete entity')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* Entity list */}
@@ -133,11 +211,92 @@ export function EntityManager() {
           {entities.map(entity => {
             const entityQbo = getEntityQboConnections(entity.id)
             const entityBanks = getEntityBankAccounts(entity.id)
+            const isEditing = editingId === entity.id
+            const isDeleting = deletingId === entity.id
+
+            if (isEditing) {
+              return (
+                <div
+                  key={entity.id}
+                  className="rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(59,130,246,0.04)] px-4 py-3 space-y-3"
+                >
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-medium text-[#7b8fa3] mb-1">Name</label>
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={e => setEditName(e.target.value)}
+                        className="w-full rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] px-3 py-1.5 text-sm text-[#e8edf4] focus:border-blue-500/50 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-[#7b8fa3] mb-1">Short Code</label>
+                      <input
+                        type="text"
+                        value={editShortCode}
+                        onChange={e => setEditShortCode(e.target.value.toUpperCase().slice(0, 4))}
+                        maxLength={4}
+                        className="w-full rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] px-3 py-1.5 text-sm text-[#e8edf4] focus:border-blue-500/50 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-medium text-[#7b8fa3] mb-1">Currency</label>
+                      <select
+                        value={editCurrency}
+                        onChange={e => setEditCurrency(e.target.value)}
+                        className="w-full rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] px-3 py-1.5 text-sm text-[#e8edf4] focus:border-blue-500/50 focus:outline-none"
+                      >
+                        {CURRENCIES.map(c => (
+                          <option key={c} value={c} className="bg-[#0d1a2d] text-[#e8edf4]">{c}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-[#7b8fa3] mb-1">Color</label>
+                      <div className="flex items-center gap-1.5 pt-0.5">
+                        {PRESET_COLORS.map(c => (
+                          <button
+                            key={c}
+                            onClick={() => setEditColor(c)}
+                            className="h-6 w-6 rounded-full border-2 transition-all"
+                            style={{
+                              backgroundColor: c,
+                              borderColor: editColor === c ? '#fff' : 'transparent',
+                              transform: editColor === c ? 'scale(1.15)' : 'scale(1)',
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={saveEdit}
+                      disabled={editSaving}
+                      className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-lg shadow-blue-600/20 transition-all hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {editSaving ? (
+                        <><Loader2 className="size-3.5 animate-spin" />Saving…</>
+                      ) : 'Save'}
+                    </button>
+                    <button
+                      onClick={cancelEdit}
+                      className="rounded-lg border border-[rgba(255,255,255,0.08)] px-3.5 py-1.5 text-sm text-[#7b8fa3] transition-all hover:text-[#e8edf4] hover:border-[rgba(255,255,255,0.15)]"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )
+            }
 
             return (
               <div
                 key={entity.id}
-                className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] px-4 py-3"
+                className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] px-4 py-3 group"
               >
                 <div className="flex items-center gap-3">
                   <span
@@ -168,6 +327,28 @@ export function EntityManager() {
                         ))}
                       </div>
                     )}
+                  </div>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => startEdit(entity)}
+                      disabled={editingId !== null || isDeleting}
+                      title="Edit"
+                      className="p-1.5 rounded-md text-[#7b8fa3] hover:text-[#e8edf4] hover:bg-white/5 transition-colors disabled:opacity-30"
+                    >
+                      <Pencil className="size-3.5" />
+                    </button>
+                    <button
+                      onClick={() => deleteEntity(entity)}
+                      disabled={editingId !== null || isDeleting}
+                      title="Delete"
+                      className="p-1.5 rounded-md text-[#7b8fa3] hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-30"
+                    >
+                      {isDeleting ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3.5" />
+                      )}
+                    </button>
                   </div>
                 </div>
               </div>

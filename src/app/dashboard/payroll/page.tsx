@@ -20,7 +20,13 @@ import {
 // --- Types ---
 
 interface PayrollSummary {
-  totalMonthlyPayroll: number
+  salariedMonthlyPayroll: number
+  contractorMonthlyCost: number
+  hourlyMonthlyCost: number
+  totalMonthlyCost: number
+  salariedCount: number
+  contractorCount: number
+  hourlyCount: number
   employeeCount: number
   avgSalary: number
   payrollPctOfSpend: number
@@ -48,6 +54,11 @@ interface RosterEmployee {
   id: string
   employee_id: string
   employee_name: string
+  title: string | null
+  location_type: string | null
+  country: string | null
+  salary_effective_date: string | null
+  entity_id: string | null
   department: string | null
   employment_type: 'full_time' | 'part_time' | 'contractor' | 'hourly' | 'intern' | null
   annual_salary: number | null
@@ -56,6 +67,16 @@ interface RosterEmployee {
   monthly_cost: number
   projects: string[]
   effective_date: string
+  pending_bonus_count: number
+  pending_bonus_total: number
+}
+
+function wasRecentlyChanged(dateStr: string | null): boolean {
+  if (!dateStr) return false
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return false
+  const daysAgo = (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24)
+  return daysAgo <= 90 && daysAgo >= 0
 }
 
 interface PayrollData {
@@ -170,6 +191,80 @@ function SummaryCard({
       </div>
       {subtext && (
         <p className="text-xs text-[#7b8fa3] mt-1">{subtext}</p>
+      )}
+    </div>
+  )
+}
+
+// --- Monthly Payroll Card (split by comp type) ---
+//
+// Displays salaried monthly payroll as the headline figure, with contractor
+// and hourly/intern costs surfaced as secondary rows so they're not conflated
+// with recurring monthly payroll.
+function MonthlyPayrollCard({
+  salariedMonthly,
+  contractorMonthly,
+  hourlyMonthly,
+  salariedCount,
+  contractorCount,
+  hourlyCount,
+  trend,
+}: {
+  salariedMonthly: number
+  contractorMonthly: number
+  hourlyMonthly: number
+  salariedCount: number
+  contractorCount: number
+  hourlyCount: number
+  trend?: { value: number; label: string } | null
+}) {
+  return (
+    <div className="rounded-xl border border-[rgba(255,255,255,0.06)] bg-[#111d2e]/80 backdrop-blur-sm p-5">
+      <p className="text-xs font-medium text-[#7b8fa3] uppercase tracking-wider mb-1">
+        Monthly Payroll
+      </p>
+      <div className="flex items-baseline gap-2">
+        <p className="text-xl font-semibold text-[#e8edf4] tabular-nums">
+          {formatCompactCurrency(salariedMonthly)}
+        </p>
+        {trend && trend.value !== 0 && (
+          <span
+            className={`text-[11px] font-medium px-1.5 py-0.5 rounded-md ${
+              trend.value > 0
+                ? 'bg-green-500/15 text-green-400'
+                : 'bg-red-500/15 text-red-400'
+            }`}
+          >
+            {trend.value > 0 ? '+' : ''}{trend.value.toFixed(1)}%
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-[#7b8fa3] mt-1">
+        Salaried · {formatCurrency(salariedMonthly * 12)}/yr
+      </p>
+      {(contractorCount > 0 || hourlyCount > 0) && (
+        <div className="mt-2.5 space-y-1 border-t border-[rgba(255,255,255,0.04)] pt-2">
+          {contractorCount > 0 && (
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-[#7b8fa3]">
+                + Contractors ({contractorCount})
+              </span>
+              <span className="text-[#c8d6e5] tabular-nums">
+                {formatCompactCurrency(contractorMonthly)}/mo
+              </span>
+            </div>
+          )}
+          {hourlyCount > 0 && (
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-[#7b8fa3]">
+                + Hourly / intern ({hourlyCount})
+              </span>
+              <span className="text-[#c8d6e5] tabular-nums">
+                {formatCompactCurrency(hourlyMonthly)}/mo
+              </span>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -566,13 +661,13 @@ function TeamRoster({ roster }: { roster: RosterEmployee[] }) {
                 Department {sortIcon('department')}
               </th>
               <th className="px-4 py-3 text-left text-[#7b8fa3] text-xs font-medium">
-                Type
+                Role
               </th>
               <th
                 className="px-4 py-3 text-right text-[#7b8fa3] text-xs font-medium cursor-pointer hover:text-[#c8d6e5] transition-colors select-none"
                 onClick={() => toggleSort('monthly_cost')}
               >
-                Monthly Salary {sortIcon('monthly_cost')}
+                Monthly Cost {sortIcon('monthly_cost')}
               </th>
               <th className="px-4 py-3 text-left text-[#7b8fa3] text-xs font-medium">
                 Projects
@@ -593,21 +688,52 @@ function TeamRoster({ roster }: { roster: RosterEmployee[] }) {
                   className="border-t border-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.02)] transition-colors"
                 >
                   <td className="px-6 py-3 text-sm text-[#c8d6e5] font-medium">
-                    {emp.employee_name}
+                    <div className="flex items-center gap-2">
+                      <span>{emp.employee_name}</span>
+                      {emp.pending_bonus_count > 0 && (
+                        <span
+                          title={`${emp.pending_bonus_count} pending bonus${emp.pending_bonus_count > 1 ? 'es' : ''} — ${formatCurrency(emp.pending_bonus_total)}`}
+                          className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-amber-500/20 text-amber-400 text-[10px] border border-amber-500/40"
+                        >
+                          $
+                        </span>
+                      )}
+                      {wasRecentlyChanged(emp.salary_effective_date) && (
+                        <span
+                          title={`Compensation changed on ${emp.salary_effective_date}`}
+                          className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-sky-500/20 text-sky-400 text-[10px] border border-sky-500/40"
+                        >
+                          Δ
+                        </span>
+                      )}
+                      {emp.location_type === 'REMOTE' && (
+                        <span
+                          title="Remote"
+                          className="text-[9px] font-medium text-[#7b8fa3] uppercase tracking-wider"
+                        >
+                          remote
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-[#7b8fa3]">
                     {emp.department ?? '-'}
                   </td>
                   <td className="px-4 py-3">
-                    {emp.employment_type && (
-                      <span
-                        className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
-                          TYPE_BADGE_CLASSES[emp.employment_type] ?? 'bg-gray-500/20 text-gray-400 border-gray-500/30'
-                        }`}
-                      >
-                        {TYPE_LABELS[emp.employment_type] ?? emp.employment_type}
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-[#c8d6e5]">
+                        {emp.title ?? <span className="text-[#3a4f65]">—</span>}
                       </span>
-                    )}
+                      {emp.employment_type && (
+                        <span
+                          className={`self-start text-[10px] font-medium px-2 py-0.5 rounded-full border ${
+                            TYPE_BADGE_CLASSES[emp.employment_type] ?? 'bg-gray-500/20 text-gray-400 border-gray-500/30'
+                          }`}
+                        >
+                          {TYPE_LABELS[emp.employment_type] ?? emp.employment_type}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-[#c8d6e5] text-right tabular-nums">
                     {formatCurrency(emp.monthly_cost)}
@@ -767,32 +893,35 @@ function PayrollContent() {
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <SummaryCard
-          label="Total Monthly Payroll"
-          value={formatCompactCurrency(summary.totalMonthlyPayroll)}
-          subtext={`${formatCurrency(summary.totalMonthlyPayroll * 12)}/yr`}
+        <MonthlyPayrollCard
+          salariedMonthly={summary.salariedMonthlyPayroll}
+          contractorMonthly={summary.contractorMonthlyCost}
+          hourlyMonthly={summary.hourlyMonthlyCost}
+          salariedCount={summary.salariedCount}
+          contractorCount={summary.contractorCount}
+          hourlyCount={summary.hourlyCount}
           trend={trends ? { value: trends.costChange, label: 'vs last month' } : null}
         />
         <SummaryCard
           label="Employee Count"
           value={String(summary.employeeCount)}
-          subtext="Active employees"
+          subtext={`${summary.salariedCount} salaried · ${summary.contractorCount} contractor · ${summary.hourlyCount} hourly`}
           trend={trends ? { value: trends.headcountChange, label: 'vs last month' } : null}
         />
         <SummaryCard
           label="Average Salary"
           value={formatCompactCurrency(summary.avgSalary)}
-          subtext="Per employee annually"
+          subtext={`Salaried employees (${summary.salariedCount})`}
         />
         <SummaryCard
           label="Payroll % of Spend"
           value={`${summary.payrollPctOfSpend.toFixed(1)}%`}
-          subtext="Monthly payroll vs total spend"
+          subtext="All comp vs total spend"
         />
         <SummaryCard
           label="Avg Cost / Employee"
-          value={summary.employeeCount > 0 ? formatCompactCurrency(summary.totalMonthlyPayroll / summary.employeeCount) : '$0'}
-          subtext="Monthly payroll per head"
+          value={summary.employeeCount > 0 ? formatCompactCurrency(summary.totalMonthlyCost / summary.employeeCount) : '$0'}
+          subtext="Monthly cost per head"
           trend={trends ? { value: trends.avgCostChange, label: 'vs last month' } : null}
         />
       </div>

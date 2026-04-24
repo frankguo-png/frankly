@@ -472,6 +472,83 @@ export function TransactionTable({ orgId, filters }: TransactionTableProps) {
     setPage(0)
   }, [filters])
 
+  // Attribution maps: bank accounts, qbo connections, entities — for showing
+  // which Plaid account / QBO company each transaction came from.
+  const [bankAccountsMap, setBankAccountsMap] = useState<Map<string, {
+    bank_name: string
+    account_name: string | null
+    currency: string
+  }>>(new Map())
+  const [qboByEntityMap, setQboByEntityMap] = useState<Map<string, {
+    company_name: string | null
+    realm_id: string
+  }>>(new Map())
+  const [entityShortCodeMap, setEntityShortCodeMap] = useState<Map<string, string>>(new Map())
+
+  useEffect(() => {
+    if (!orgId) return
+    const supabase = createClient()
+    ;(async () => {
+      const [banksRes, qboRes, entitiesRes] = await Promise.all([
+        supabase
+          .from('bank_accounts')
+          .select('id, bank_name, account_name, currency')
+          .eq('org_id', orgId),
+        supabase
+          .from('qbo_connections')
+          .select('company_name, realm_id, entity_id')
+          .eq('org_id', orgId),
+        supabase
+          .from('entities')
+          .select('id, short_code')
+          .eq('org_id', orgId),
+      ])
+
+      const banks = new Map<string, { bank_name: string; account_name: string | null; currency: string }>()
+      for (const b of (banksRes.data ?? [])) {
+        banks.set(b.id, { bank_name: b.bank_name, account_name: b.account_name, currency: b.currency })
+      }
+      setBankAccountsMap(banks)
+
+      const qbo = new Map<string, { company_name: string | null; realm_id: string }>()
+      for (const c of (qboRes.data ?? [])) {
+        if (c.entity_id) qbo.set(c.entity_id, { company_name: c.company_name, realm_id: c.realm_id })
+      }
+      setQboByEntityMap(qbo)
+
+      const short = new Map<string, string>()
+      for (const e of (entitiesRes.data ?? [])) {
+        if (e.short_code) short.set(e.id, e.short_code)
+      }
+      setEntityShortCodeMap(short)
+    })()
+  }, [orgId])
+
+  const getSourceAttribution = useCallback(
+    (tx: Transaction): string | null => {
+      const shortCode = tx.entity_id ? entityShortCodeMap.get(tx.entity_id) ?? null : null
+      const short = shortCode ? ` · ${shortCode}` : ''
+
+      if (tx.source === 'plaid' && tx.bank_account_id) {
+        const acct = bankAccountsMap.get(tx.bank_account_id)
+        if (acct) {
+          const label = acct.account_name && acct.account_name !== acct.bank_name
+            ? `${acct.bank_name} – ${acct.account_name}`
+            : acct.bank_name
+          return `${label}${short}`
+        }
+      }
+
+      if (tx.source === 'qbo' && tx.entity_id) {
+        const conn = qboByEntityMap.get(tx.entity_id)
+        if (conn) return `${conn.company_name ?? conn.realm_id}${short}`
+      }
+
+      return shortCode ?? null
+    },
+    [bankAccountsMap, qboByEntityMap, entityShortCodeMap]
+  )
+
   const handleBulkUpdate = useCallback(
     async (field: 'category' | 'department', value: string) => {
       if (selectedIds.size === 0) return
@@ -676,11 +753,21 @@ export function TransactionTable({ orgId, filters }: TransactionTableProps) {
                   )}
                 </TableCell>
                 <TableCell>
-                  <span
-                    className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${sourceColors[tx.source] ?? 'bg-zinc-500/10 text-zinc-500'}`}
-                  >
-                    {tx.source}
-                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <span
+                      className={`self-start inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${sourceColors[tx.source] ?? 'bg-zinc-500/10 text-zinc-500'}`}
+                    >
+                      {tx.source}
+                    </span>
+                    {(() => {
+                      const attr = getSourceAttribution(tx)
+                      return attr ? (
+                        <span className="text-[10px] text-muted-foreground/70 truncate max-w-[160px]">
+                          {attr}
+                        </span>
+                      ) : null
+                    })()}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

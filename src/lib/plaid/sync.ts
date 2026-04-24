@@ -2,6 +2,19 @@ import { plaidClient } from './client'
 import { mapPlaidTransaction } from './mappers'
 import { createServiceClient } from '@/lib/supabase/server'
 
+// exchange-token writes the Plaid access_token as base64 (placeholder "at-rest
+// obfuscation" pending real encryption). Decode on read, with a fallback for
+// any legacy rows that may have stored it raw.
+function decodeAccessToken(stored: string): string {
+  try {
+    const decoded = Buffer.from(stored, 'base64').toString('utf8')
+    if (decoded.startsWith('access-')) return decoded
+  } catch {
+    // fall through
+  }
+  return stored
+}
+
 export async function syncPlaidTransactions(bankAccountId: string) {
   const supabase = createServiceClient()
 
@@ -16,6 +29,7 @@ export async function syncPlaidTransactions(bankAccountId: string) {
     throw new Error(`Bank account not found or missing access token: ${bankError?.message}`)
   }
 
+  const accessToken = decodeAccessToken(bankAccount.plaid_access_token)
   const orgId = bankAccount.org_id
   const entityId = bankAccount.entity_id ?? null
 
@@ -44,7 +58,7 @@ export async function syncPlaidTransactions(bankAccountId: string) {
   try {
     while (hasMore) {
       const response = await plaidClient.transactionsSync({
-        access_token: bankAccount.plaid_access_token,
+        access_token: accessToken,
         cursor: cursor,
       })
 

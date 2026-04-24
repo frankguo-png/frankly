@@ -12,11 +12,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { public_token } = await request.json()
+    const { public_token, entity_id } = await request.json()
+    console.log('[plaid/exchange-token] user.id=', user.id, ' entity_id=', entity_id, ' public_token length=', public_token?.length)
 
     if (!public_token) {
+      console.log('[plaid/exchange-token] 400: public_token missing')
       return NextResponse.json(
         { error: 'public_token is required' },
+        { status: 400 }
+      )
+    }
+
+    if (!entity_id) {
+      console.log('[plaid/exchange-token] 400: entity_id missing')
+      return NextResponse.json(
+        { error: 'entity_id is required' },
         { status: 400 }
       )
     }
@@ -41,15 +51,35 @@ export async function POST(request: NextRequest) {
       .single<{ org_id: string }>()
 
     if (orgError || !userOrg) {
+      console.log('[plaid/exchange-token] 404: userOrg lookup failed', { orgError })
       return NextResponse.json(
         { error: 'User organization not found' },
         { status: 404 }
       )
     }
 
+    console.log('[plaid/exchange-token] userOrg.org_id=', userOrg.org_id)
+
+    // Verify the entity belongs to this user's org (RLS ensures cross-org lookups return nothing)
+    const { data: entity, error: entityError } = await supabase
+      .from('entities')
+      .select('id')
+      .eq('id', entity_id)
+      .eq('org_id', userOrg.org_id)
+      .single<{ id: string }>()
+
+    if (entityError || !entity) {
+      console.log('[plaid/exchange-token] 400: entity lookup failed', { entity_id, org_id: userOrg.org_id, entityError })
+      return NextResponse.json(
+        { error: 'Entity not found for this organization', entity_id, org_id: userOrg.org_id },
+        { status: 400 }
+      )
+    }
+
     // Insert bank accounts
     const bankAccountInserts = accounts.map((account) => ({
       org_id: userOrg.org_id,
+      entity_id,
       plaid_item_id: item_id,
       // TODO: Replace base64 encoding with proper encryption (e.g., AES-256)
       plaid_access_token: Buffer.from(access_token).toString('base64'),
@@ -86,9 +116,25 @@ export async function POST(request: NextRequest) {
       bank_account_ids: bankAccounts.map((ba) => ba.id),
     })
   } catch (error) {
-    console.error('Error exchanging token:', error)
+    // Plaid SDK errors have { response: { data: { error_code, error_message, ... } } }
+    const err = error as {
+      response?: { data?: { error_code?: string; error_message?: string; error_type?: string } }
+      message?: string
+    }
+    const plaid = err?.response?.data
+    console.error('[plaid/exchange-token] 500 caught error:', {
+      error_code: plaid?.error_code,
+      error_type: plaid?.error_type,
+      error_message: plaid?.error_message,
+      message: err?.message,
+    })
     return NextResponse.json(
-      { error: 'Failed to exchange token' },
+      {
+        error: 'Failed to exchange token',
+        plaid_error_code: plaid?.error_code ?? null,
+        plaid_error_message: plaid?.error_message ?? null,
+        plaid_error_type: plaid?.error_type ?? null,
+      },
       { status: 500 }
     )
   }

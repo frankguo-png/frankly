@@ -224,6 +224,7 @@ export interface Database {
           effective_date: string
           end_date: string | null
           created_at: string
+          entity_id: string | null
         }
         Insert: {
           id?: string
@@ -239,6 +240,7 @@ export interface Database {
           effective_date: string
           end_date?: string | null
           created_at?: string
+          entity_id?: string | null
         }
         Update: {
           id?: string
@@ -254,6 +256,7 @@ export interface Database {
           effective_date?: string
           end_date?: string | null
           created_at?: string
+          entity_id?: string | null
         }
         Relationships: []
       }
@@ -394,6 +397,13 @@ export interface Database {
           start_date: string | null
           salary: number | null
           created_at: string
+          rippling_id: string | null
+          rippling_manager_id: string | null
+          country: string | null
+          location_type: string | null
+          is_manager: boolean
+          salary_effective_date: string | null
+          entity_id: string | null
         }
         Insert: {
           id?: string
@@ -408,6 +418,13 @@ export interface Database {
           start_date?: string | null
           salary?: number | null
           created_at?: string
+          rippling_id?: string | null
+          rippling_manager_id?: string | null
+          country?: string | null
+          location_type?: string | null
+          is_manager?: boolean
+          salary_effective_date?: string | null
+          entity_id?: string | null
         }
         Update: {
           id?: string
@@ -422,6 +439,13 @@ export interface Database {
           start_date?: string | null
           salary?: number | null
           created_at?: string
+          rippling_id?: string | null
+          rippling_manager_id?: string | null
+          country?: string | null
+          location_type?: string | null
+          is_manager?: boolean
+          salary_effective_date?: string | null
+          entity_id?: string | null
         }
         Relationships: []
       }

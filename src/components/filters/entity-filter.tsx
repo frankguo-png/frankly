@@ -10,12 +10,7 @@ export function EntityFilter() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  // Don't render if org has 0 or 1 entities
-  if (entities.length <= 1) return null
-
-  const selected = entities.find(e => e.id === entityId)
-
-  // Close on outside click
+  // Close on outside click — must run before any early return so hook count stays stable.
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
@@ -27,6 +22,11 @@ export function EntityFilter() {
       return () => document.removeEventListener('mousedown', handleClick)
     }
   }, [open])
+
+  // Don't render if org has 0 or 1 entities
+  if (entities.length <= 1) return null
+
+  const selected = entities.find(e => e.id === entityId)
 
   return (
     <div ref={ref} className="relative">

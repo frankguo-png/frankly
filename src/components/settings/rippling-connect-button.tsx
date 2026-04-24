@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Loader2, Users, DollarSign, RefreshCw } from 'lucide-react'
+import { Loader2, Users } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 export function RipplingConnectButton() {
@@ -14,7 +14,6 @@ export function RipplingConnectButton() {
   const [employeeCount, setEmployeeCount] = useState(0)
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null)
   const [syncingEmployees, setSyncingEmployees] = useState(false)
-  const [syncingPayroll, setSyncingPayroll] = useState(false)
 
   const refreshStatus = useCallback(async () => {
     const supabase = createClient()
@@ -50,8 +49,6 @@ export function RipplingConnectButton() {
     try {
       const res = await fetch('/api/rippling/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'employees' }),
       })
       if (!res.ok) {
         const data = await res.json()
@@ -61,9 +58,7 @@ export function RipplingConnectButton() {
       toast.success(
         `Synced ${result.employees?.synced ?? 0} employees. ${result.employees?.deactivated ?? 0} deactivated.`
       )
-      // Refresh local state
       await refreshStatus()
-      // Revalidate dashboard SWR caches
       mutate((key: string) => typeof key === 'string' && key.startsWith('/api/kpi'))
       mutate('/api/forecast')
     } catch (err) {
@@ -72,36 +67,6 @@ export function RipplingConnectButton() {
       )
     } finally {
       setSyncingEmployees(false)
-    }
-  }
-
-  async function handleSyncPayroll() {
-    setSyncingPayroll(true)
-    try {
-      const res = await fetch('/api/rippling/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'payroll' }),
-      })
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || 'Sync failed')
-      }
-      const result = await res.json()
-      toast.success(
-        `Synced ${result.payroll?.runs_synced ?? 0} payroll runs as transactions.`
-      )
-      // Refresh local state
-      await refreshStatus()
-      // Revalidate dashboard SWR caches
-      mutate((key: string) => typeof key === 'string' && key.startsWith('/api/kpi'))
-      mutate('/api/forecast')
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : 'Failed to sync payroll'
-      )
-    } finally {
-      setSyncingPayroll(false)
     }
   }
 
@@ -149,46 +114,25 @@ export function RipplingConnectButton() {
         your environment variables to enable syncing.
       </p>
 
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleSyncEmployees}
-          disabled={syncingEmployees || syncingPayroll}
-          className="flex-1"
-        >
-          {syncingEmployees ? (
-            <>
-              <Loader2 className="size-4 animate-spin mr-2" />
-              Syncing...
-            </>
-          ) : (
-            <>
-              <Users className="size-4 mr-2" />
-              Sync Employees
-            </>
-          )}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleSyncPayroll}
-          disabled={syncingEmployees || syncingPayroll}
-          className="flex-1"
-        >
-          {syncingPayroll ? (
-            <>
-              <Loader2 className="size-4 animate-spin mr-2" />
-              Syncing...
-            </>
-          ) : (
-            <>
-              <DollarSign className="size-4 mr-2" />
-              Sync Payroll
-            </>
-          )}
-        </Button>
-      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleSyncEmployees}
+        disabled={syncingEmployees}
+        className="w-full"
+      >
+        {syncingEmployees ? (
+          <>
+            <Loader2 className="size-4 animate-spin mr-2" />
+            Syncing...
+          </>
+        ) : (
+          <>
+            <Users className="size-4 mr-2" />
+            Sync Employees
+          </>
+        )}
+      </Button>
     </div>
   )
 }

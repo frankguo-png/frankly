@@ -44,7 +44,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, sync: summary })
     }
 
-    // User-initiated sync
+    // User-initiated: connectionId given → single connection,
+    // no body → sync all of the user's org's active QBO connections.
     const supabase = await createServerSupabaseClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -52,18 +53,46 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { connectionId } = await request.json()
+    let body: { connectionId?: string } = {}
+    try { body = await request.json() } catch { /* no body is fine */ }
+    const { connectionId } = body
 
-    if (!connectionId) {
-      return NextResponse.json(
-        { error: 'connectionId is required' },
-        { status: 400 }
-      )
+    if (connectionId) {
+      const result = await syncQboTransactions(connectionId)
+      return NextResponse.json({ success: true, connectionId, ...result })
     }
 
-    const result = await syncQboTransactions(connectionId)
+    const { data: userOrg } = await supabase
+      .from('user_organizations')
+      .select('org_id')
+      .eq('user_id', user.id)
+      .limit(1)
+      .single<{ org_id: string }>()
+    if (!userOrg) {
+      return NextResponse.json({ error: 'Organization not found' }, { status: 404 })
+    }
 
-    return NextResponse.json({ success: true, connectionId, ...result })
+    const service = createServiceClient()
+    const { data: connections, error: connErr } = await service
+      .from('qbo_connections')
+      .select('id')
+      .eq('org_id', userOrg.org_id)
+      .eq('connection_status', 'active')
+    if (connErr) {
+      return NextResponse.json({ error: connErr.message }, { status: 500 })
+    }
+
+    const results = await Promise.allSettled(
+      (connections ?? []).map(c => syncQboTransactions(c.id))
+    )
+    return NextResponse.json({
+      success: true,
+      sync: {
+        total: results.length,
+        succeeded: results.filter(r => r.status === 'fulfilled').length,
+        failed: results.filter(r => r.status === 'rejected').length,
+      },
+    })
   } catch (error) {
     console.error('Error syncing QBO transactions:', error)
     return NextResponse.json(

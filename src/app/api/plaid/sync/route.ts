@@ -38,7 +38,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, sync: summary })
     }
 
-    // Sync a specific bank account (user-initiated)
+    // User-initiated: sync a single account when bankAccountId given,
+    // otherwise sync every active account in the user's org.
     const supabase = await createServerSupabaseClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -46,18 +47,47 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { bankAccountId } = await request.json()
+    let body: { bankAccountId?: string } = {}
+    try { body = await request.json() } catch { /* no body is fine */ }
+    const { bankAccountId } = body
 
-    if (!bankAccountId) {
-      return NextResponse.json(
-        { error: 'bankAccountId is required' },
-        { status: 400 }
-      )
+    if (bankAccountId) {
+      await syncPlaidTransactions(bankAccountId)
+      return NextResponse.json({ success: true, bankAccountId })
     }
 
-    await syncPlaidTransactions(bankAccountId)
+    // No bankAccountId — sync all of the user's org's active accounts.
+    const { data: userOrg } = await supabase
+      .from('user_organizations')
+      .select('org_id')
+      .eq('user_id', user.id)
+      .limit(1)
+      .single<{ org_id: string }>()
+    if (!userOrg) {
+      return NextResponse.json({ error: 'Organization not found' }, { status: 404 })
+    }
 
-    return NextResponse.json({ success: true, bankAccountId })
+    const service = createServiceClient()
+    const { data: accounts, error: acctErr } = await service
+      .from('bank_accounts')
+      .select('id')
+      .eq('org_id', userOrg.org_id)
+      .eq('connection_status', 'active')
+    if (acctErr) {
+      return NextResponse.json({ error: acctErr.message }, { status: 500 })
+    }
+
+    const results = await Promise.allSettled(
+      (accounts ?? []).map(a => syncPlaidTransactions(a.id))
+    )
+    return NextResponse.json({
+      success: true,
+      sync: {
+        total: results.length,
+        succeeded: results.filter(r => r.status === 'fulfilled').length,
+        failed: results.filter(r => r.status === 'rejected').length,
+      },
+    })
   } catch (error) {
     console.error('Error syncing transactions:', error)
     return NextResponse.json(

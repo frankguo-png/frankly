@@ -85,6 +85,10 @@ export function Header() {
         totalCreated += qboResult.total_created || qboResult.records_created || 0
       }
 
+      // Sync Rippling (employees / payroll_allocations)
+      setSyncState({ status: 'syncing', source: 'Rippling' })
+      await fetch('/api/rippling/sync', { method: 'POST' }).catch(() => undefined)
+
       // Done
       setSyncState({ status: 'done', count: totalCreated })
       toast.success(`Sync complete: ${totalCreated} new transactions`)

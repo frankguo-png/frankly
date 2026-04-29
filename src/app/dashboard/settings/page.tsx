@@ -8,13 +8,39 @@ import { RipplingConnectButton } from '@/components/settings/rippling-connect-bu
 import { EntityManager } from '@/components/settings/entity-manager'
 import { BankAccountsManager } from '@/components/settings/bank-accounts-manager'
 import { toast } from 'sonner'
-import { Loader2, Sparkles, Trash2, AlertTriangle } from 'lucide-react'
+import { Loader2, Sparkles, Trash2, AlertTriangle, Layers } from 'lucide-react'
 
 export default function SettingsPage() {
   const { mutate } = useSWRConfig()
   const [categorizing, setCategorizing] = useState(false)
+  const [deduping, setDeduping] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
+
+  const handleDedup = async () => {
+    setDeduping(true)
+    try {
+      const res = await fetch('/api/dedup', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error ?? 'Failed to dedupe')
+        return
+      }
+      if (data.duplicates_found === 0) {
+        toast.info('No duplicates found')
+      } else {
+        toast.success(
+          `Found ${data.duplicates_found} duplicate${data.duplicates_found === 1 ? '' : 's'}` +
+            (data.enriched ? ` · enriched ${data.enriched} QBO row${data.enriched === 1 ? '' : 's'}` : '')
+        )
+        mutate(() => true, undefined, { revalidate: true })
+      }
+    } catch {
+      toast.error('Network error while deduping')
+    } finally {
+      setDeduping(false)
+    }
+  }
 
   const handleCategorize = async () => {
     setCategorizing(true)
@@ -118,6 +144,35 @@ export default function SettingsPage() {
                 <>
                   <Sparkles className="size-4" />
                   Run Categorization
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Deduplication (Plaid ↔ QBO) */}
+        <div className="rounded-xl border border-[rgba(255,255,255,0.06)] bg-[#111d2e]/60 p-5">
+          <h2 className="text-base font-semibold text-[#e8edf4]">Deduplicate Transactions</h2>
+          <p className="mt-1 text-sm text-[#7b8fa3]">
+            Match Plaid bank transactions to QBO accounting records (same date ±2 days, same amount,
+            similar vendor name) and mark Plaid copies as duplicates. Runs automatically after each
+            sync — use this for an on-demand pass.
+          </p>
+          <div className="mt-4">
+            <button
+              onClick={handleDedup}
+              disabled={deduping}
+              className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-lg shadow-blue-600/20 transition-all hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {deduping ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Running...
+                </>
+              ) : (
+                <>
+                  <Layers className="size-4" />
+                  Run Dedup
                 </>
               )}
             </button>

@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient, createServiceClient } from '@/lib/supabase/server'
 import { syncQboTransactions } from '@/lib/qbo/sync'
+import { deduplicateTransactions } from '@/lib/utils/dedup'
+
+async function safeDedupe(orgId: string) {
+  try {
+    return await deduplicateTransactions(orgId)
+  } catch (e) {
+    console.error(`Dedup failed for org ${orgId}:`, e)
+    return null
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,7 +24,7 @@ export async function POST(request: NextRequest) {
       const supabase = createServiceClient()
       const { data: connections, error } = await supabase
         .from('qbo_connections')
-        .select('id')
+        .select('id, org_id')
         .eq('connection_status', 'active')
 
       if (error) {
@@ -29,10 +39,20 @@ export async function POST(request: NextRequest) {
         (connections || []).map((conn) => syncQboTransactions(conn.id))
       )
 
+      const uniqueOrgIds = Array.from(new Set((connections ?? []).map(c => c.org_id)))
+      const dedupResults = await Promise.allSettled(uniqueOrgIds.map(safeDedupe))
+
       const summary = {
         total: results.length,
         succeeded: results.filter((r) => r.status === 'fulfilled').length,
         failed: results.filter((r) => r.status === 'rejected').length,
+        dedup: {
+          orgs: uniqueOrgIds.length,
+          duplicates_found: dedupResults.reduce((sum, r) => {
+            if (r.status === 'fulfilled' && r.value) return sum + r.value.duplicates_found
+            return sum
+          }, 0),
+        },
         details: results.map((r, i) => ({
           connectionId: connections?.[i]?.id,
           status: r.status,
@@ -59,7 +79,14 @@ export async function POST(request: NextRequest) {
 
     if (connectionId) {
       const result = await syncQboTransactions(connectionId)
-      return NextResponse.json({ success: true, connectionId, ...result })
+      const service = createServiceClient()
+      const { data: conn } = await service
+        .from('qbo_connections')
+        .select('org_id')
+        .eq('id', connectionId)
+        .single<{ org_id: string }>()
+      const dedup = conn ? await safeDedupe(conn.org_id) : null
+      return NextResponse.json({ success: true, connectionId, ...result, dedup })
     }
 
     const { data: userOrg } = await supabase
@@ -85,6 +112,7 @@ export async function POST(request: NextRequest) {
     const results = await Promise.allSettled(
       (connections ?? []).map(c => syncQboTransactions(c.id))
     )
+    const dedup = await safeDedupe(userOrg.org_id)
     return NextResponse.json({
       success: true,
       sync: {
@@ -92,6 +120,7 @@ export async function POST(request: NextRequest) {
         succeeded: results.filter(r => r.status === 'fulfilled').length,
         failed: results.filter(r => r.status === 'rejected').length,
       },
+      dedup,
     })
   } catch (error) {
     console.error('Error syncing QBO transactions:', error)

@@ -1,4 +1,4 @@
-export type SupportedCurrency = 'USD' | 'GBP' | 'CAD' | 'EUR'
+export type SupportedCurrency = 'USD' | 'GBP' | 'CAD' | 'EUR' | 'INR'
 
 export interface FxRates {
   base: 'USD'
@@ -6,12 +6,17 @@ export interface FxRates {
   timestamp: number
 }
 
+// Rates are quoted as "1 USD = X currency". Update if Ampliwork starts paying
+// in additional currencies and add to SupportedCurrency above.
 const FALLBACK_RATES: Record<SupportedCurrency, number> = {
   USD: 1,
   GBP: 0.79,
   CAD: 1.36,
   EUR: 0.92,
+  INR: 83,
 }
+
+const SYMBOLS_PARAM = 'USD,GBP,CAD,EUR,INR'
 
 const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
 
@@ -40,7 +45,7 @@ export async function fetchLatestRates(): Promise<FxRates> {
 
   try {
     const res = await fetch(
-      `https://openexchangerates.org/api/latest.json?app_id=${appId}&symbols=USD,GBP,CAD,EUR`,
+      `https://openexchangerates.org/api/latest.json?app_id=${appId}&symbols=${SYMBOLS_PARAM}`,
       { next: { revalidate: 3600 } }
     )
 
@@ -56,6 +61,7 @@ export async function fetchLatestRates(): Promise<FxRates> {
         GBP: data.rates?.GBP ?? FALLBACK_RATES.GBP,
         CAD: data.rates?.CAD ?? FALLBACK_RATES.CAD,
         EUR: data.rates?.EUR ?? FALLBACK_RATES.EUR,
+        INR: data.rates?.INR ?? FALLBACK_RATES.INR,
       },
       timestamp: (data.timestamp ?? Math.floor(now / 1000)) * 1000,
     }
@@ -98,4 +104,24 @@ export function convertFromUSD(
   const rate = rates.rates[targetCurrency]
   if (!rate) return amount
   return amount * rate
+}
+
+/**
+ * Convert any currency code (string) to USD, gracefully degrading to identity
+ * for unsupported codes. Use this when consuming external data (e.g. Rippling
+ * compensation) where the currency could be anything.
+ */
+export function convertAnyToUSD(
+  amount: number,
+  currency: string | null | undefined,
+  rates: FxRates
+): number {
+  if (!currency) return amount
+  const code = currency.toUpperCase()
+  if (code in rates.rates) {
+    return convertToUSD(amount, code as SupportedCurrency, rates)
+  }
+  // Unknown currency — log once and treat as USD so totals don't blow up.
+  console.warn(`[fx-rates] no rate for currency "${code}", treating as USD`)
+  return amount
 }

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import type { Json } from '@/types/database'
+import { fetchLatestRates, convertAnyToUSD, type FxRates } from '@/lib/currency/fx-rates'
 
-function getMonthlyCost(emp: {
+// Native-currency monthly cost (no FX conversion).
+function getMonthlyCostNative(emp: {
   annual_salary: number | null
   hourly_rate: number | null
   hours_per_week: number | null
@@ -10,6 +12,18 @@ function getMonthlyCost(emp: {
   if (emp.annual_salary) return emp.annual_salary / 12
   if (emp.hourly_rate) return emp.hourly_rate * (emp.hours_per_week ?? 40) * 52 / 12
   return 0
+}
+
+function getMonthlyCostUSD(
+  emp: {
+    annual_salary: number | null
+    hourly_rate: number | null
+    hours_per_week: number | null
+    currency?: string | null
+  },
+  rates: FxRates
+): number {
+  return convertAnyToUSD(getMonthlyCostNative(emp), emp.currency, rates)
 }
 
 type CompBucket = 'salaried' | 'contractor' | 'hourly'
@@ -78,6 +92,10 @@ export async function GET(request: NextRequest) {
 
     const orgId = userOrg.org_id
 
+    // FX rates — used to convert each row's native compensation to USD before
+    // we sum across employees paid in different currencies.
+    const fxRates = await fetchLatestRates()
+
     // Fetch all payroll allocations (active)
     let activeQuery = supabase
       .from('payroll_allocations')
@@ -99,7 +117,7 @@ export async function GET(request: NextRequest) {
     // Fetch all payroll allocations (including historical for trend)
     const { data: allEmployees } = await supabase
       .from('payroll_allocations')
-      .select('employee_id, employee_name, annual_salary, hourly_rate, hours_per_week, department, employment_type, effective_date, end_date')
+      .select('employee_id, employee_name, annual_salary, hourly_rate, hours_per_week, currency, department, employment_type, effective_date, end_date')
       .eq('org_id', orgId)
       .order('effective_date', { ascending: true })
 
@@ -164,9 +182,9 @@ export async function GET(request: NextRequest) {
     let salariedCount = 0
     let contractorCount = 0
     let hourlyCount = 0
-    let salariedAnnualTotal = 0
+    let salariedAnnualTotalUSD = 0
     for (const e of emps) {
-      const cost = getMonthlyCost(e)
+      const cost = getMonthlyCostUSD(e, fxRates)
       const effType = effectiveEmploymentType(
         e.employment_type,
         titleByRipplingId.get(e.employee_id) ?? null
@@ -175,7 +193,7 @@ export async function GET(request: NextRequest) {
       if (bucket === 'salaried') {
         salariedMonthlyPayroll += cost
         salariedCount += 1
-        salariedAnnualTotal += e.annual_salary ?? 0
+        salariedAnnualTotalUSD += convertAnyToUSD(e.annual_salary ?? 0, e.currency, fxRates)
       } else if (bucket === 'contractor') {
         contractorMonthlyCost += cost
         contractorCount += 1
@@ -186,15 +204,15 @@ export async function GET(request: NextRequest) {
     }
     const totalMonthlyCost = salariedMonthlyPayroll + contractorMonthlyCost + hourlyMonthlyCost
     const employeeCount = emps.length
-    const avgSalary = salariedCount > 0 ? salariedAnnualTotal / salariedCount : 0
+    const avgSalary = salariedCount > 0 ? salariedAnnualTotalUSD / salariedCount : 0
     const payrollPctOfSpend = totalSpend > 0 ? (totalMonthlyCost / (totalSpend / 12)) * 100 : 0
 
-    // Department breakdown
+    // Department breakdown (USD)
     const departmentMap: Record<string, { cost: number; count: number }> = {}
     for (const emp of emps) {
       const dept = emp.department ?? 'Uncategorized'
       if (!departmentMap[dept]) departmentMap[dept] = { cost: 0, count: 0 }
-      departmentMap[dept].cost += getMonthlyCost(emp)
+      departmentMap[dept].cost += getMonthlyCostUSD(emp, fxRates)
       departmentMap[dept].count += 1
     }
     const departmentBreakdown = Object.entries(departmentMap)
@@ -209,7 +227,7 @@ export async function GET(request: NextRequest) {
         titleByRipplingId.get(emp.employee_id) ?? null
       ) ?? 'unknown'
       if (!typeMap[type]) typeMap[type] = { cost: 0, count: 0 }
-      typeMap[type].cost += getMonthlyCost(emp)
+      typeMap[type].cost += getMonthlyCostUSD(emp, fxRates)
       typeMap[type].count += 1
     }
     const employmentTypeBreakdown = Object.entries(typeMap)
@@ -234,7 +252,7 @@ export async function GET(request: NextRequest) {
 
         // Employee was active if effective_date <= monthEnd and (end_date is null or end_date >= monthStart)
         if (effDate <= monthEnd && (!endDate || endDate >= date)) {
-          monthCost += getMonthlyCost(emp)
+          monthCost += getMonthlyCostUSD(emp, fxRates)
           headcount += 1
         }
       }
@@ -266,7 +284,9 @@ export async function GET(request: NextRequest) {
         annual_salary: emp.annual_salary,
         hourly_rate: emp.hourly_rate,
         hours_per_week: emp.hours_per_week,
-        monthly_cost: getMonthlyCost(emp),
+        currency: emp.currency ?? 'USD',
+        monthly_cost: getMonthlyCostNative(emp),
+        monthly_cost_usd: getMonthlyCostUSD(emp, fxRates),
         projects,
         effective_date: emp.effective_date,
         pending_bonus_count: bonus?.count ?? 0,

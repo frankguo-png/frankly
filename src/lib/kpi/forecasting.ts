@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { format, subMonths, startOfMonth, endOfMonth, addMonths } from 'date-fns'
+import { fetchLatestRates, convertAnyToUSD } from '@/lib/currency/fx-rates'
 
 export interface RunwayResult {
   monthsRemaining: number
@@ -221,23 +222,30 @@ export async function forecastCashPosition(
 export async function getPayrollVsCashAlert(orgId: string, entityId?: string | null): Promise<PayrollCashAlert> {
   const supabase = createServiceClient()
 
-  const [balanceNow, { data: allocations, error }] = await Promise.all([
+  const [balanceNow, { data: allocations, error }, fxRates] = await Promise.all([
     getBankBalance(orgId, entityId),
     supabase
       .from('payroll_allocations')
-      .select('annual_salary')
+      .select('annual_salary, hourly_rate, hours_per_week, currency')
       .eq('org_id', orgId)
       .is('end_date', null),
+    fetchLatestRates(),
   ])
 
   if (error) {
     throw new Error(`Failed to fetch payroll allocations: ${error.message}`)
   }
 
-  const monthlyPayroll = (allocations ?? []).reduce(
-    (sum, a) => sum + ((a.annual_salary ?? 0) / 12),
-    0
-  )
+  // Convert each row's native compensation to USD before summing — workers
+  // may be paid in different currencies (INR/GBP/CAD).
+  const monthlyPayroll = (allocations ?? []).reduce((sum, a) => {
+    const native = a.annual_salary
+      ? a.annual_salary / 12
+      : a.hourly_rate
+      ? a.hourly_rate * (a.hours_per_week ?? 40) * 52 / 12
+      : 0
+    return sum + convertAnyToUSD(native, a.currency, fxRates)
+  }, 0)
 
   const coverageMonths = monthlyPayroll > 0 ? balanceNow / monthlyPayroll : 999
 

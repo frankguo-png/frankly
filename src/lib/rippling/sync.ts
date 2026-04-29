@@ -1,4 +1,4 @@
-import { getWorkers, getWorkerName, getWorkerDepartment, getWorkerCompensation, getWorkerAnnualSalary, getWorkerHourlyRate, getWorkerEmploymentType, type RipplingWorker } from './client'
+import { getWorkers, getWorkerName, getWorkerDepartment, getWorkerCompensation, getWorkerAnnualSalary, getWorkerHourlyRate, getWorkerCompensationCurrency, getWorkerEmploymentType, type RipplingWorker } from './client'
 import { createServiceClient } from '@/lib/supabase/server'
 
 // ---------------------------------------------------------------------------
@@ -166,7 +166,8 @@ export async function syncRipplingEmployees(orgId: string) {
       const dept = getWorkerDepartment(worker)
       const mapped = mapEmploymentType(worker)
       const { annual_salary, hourly_rate, hours_per_week } = getCompensationFields(worker, mapped)
-      const salary = getWorkerCompensation(worker) // annualized number for employees.salary
+      const compensationCurrency = getWorkerCompensationCurrency(worker)
+      const salary = getWorkerCompensation(worker) // annualized native amount for employees.salary
       const active = isWorkerActive(worker)
       const allocEndDate = getAllocationEndDate(worker)
       const effectiveDate = worker.start_date ?? todayISO()
@@ -183,6 +184,7 @@ export async function syncRipplingEmployees(orgId: string) {
             annual_salary,
             hourly_rate,
             hours_per_week,
+            currency: compensationCurrency,
             department: dept,
             project_allocations: [],
             effective_date: effectiveDate,

@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import type { KpiSummary, SpendByCategory, TimeSeriesPoint, Granularity } from './types'
-import { format, startOfWeek, startOfMonth } from 'date-fns'
+import { format, startOfWeek, startOfMonth, differenceInDays } from 'date-fns'
+import { fetchLatestRates, convertAnyToUSD } from '@/lib/currency/fx-rates'
 
 const DEPARTMENT_COLORS: Record<string, string> = {
   Engineering: '#3b82f6',
@@ -46,7 +47,7 @@ export async function getKpiSummary(
 
   let cashIn = 0
   let cashOut = 0
-  let payrollTotal = 0
+  let payrollFromTransactions = 0
   let toolsAndSoftware = 0
 
   for (const tx of transactions ?? []) {
@@ -55,7 +56,7 @@ export async function getKpiSummary(
     } else {
       cashOut += Math.abs(tx.amount)
       if (tx.category === 'Payroll') {
-        payrollTotal += Math.abs(tx.amount)
+        payrollFromTransactions += Math.abs(tx.amount)
       }
       if (tx.category === 'Tools & Software') {
         toolsAndSoftware += Math.abs(tx.amount)
@@ -80,6 +81,39 @@ export async function getKpiSummary(
     (sum, account) => sum + (account.current_balance ?? 0),
     0
   )
+
+  // Committed payroll from Rippling roster (USD-converted from each row's
+  // native currency). Transaction-based payroll (above) requires the bank/QBO
+  // sync to have categorized rows as 'Payroll' — often unreliable, especially
+  // before a categorization pass has run. We prefer allocations when they exist.
+  let allocQuery = supabase
+    .from('payroll_allocations')
+    .select('annual_salary, hourly_rate, hours_per_week, currency')
+    .eq('org_id', orgId)
+    .is('end_date', null)
+  if (entityId) allocQuery = allocQuery.eq('entity_id', entityId)
+  const { data: allocations } = await allocQuery
+  const allocationCount = allocations?.length ?? 0
+
+  let payrollTotal = payrollFromTransactions
+  if (allocationCount > 0) {
+    const fxRates = await fetchLatestRates()
+    const monthlyPayrollUSD = (allocations ?? []).reduce((sum, a) => {
+      const native = a.annual_salary
+        ? a.annual_salary / 12
+        : a.hourly_rate
+        ? a.hourly_rate * (a.hours_per_week ?? 40) * 52 / 12
+        : 0
+      return sum + convertAnyToUSD(native, a.currency, fxRates)
+    }, 0)
+
+    // Scale committed monthly cost up to the requested period for comparability
+    // with cashOut. Min 1 month so a same-day window still shows 1 month of cost.
+    const days = Math.max(differenceInDays(new Date(end), new Date(start)) + 1, 1)
+    const monthsInPeriod = Math.max(days / 30, 1)
+    const allocationsPayroll = monthlyPayrollUSD * monthsInPeriod
+    payrollTotal = Math.max(payrollFromTransactions, allocationsPayroll)
+  }
 
   return {
     cashIn,

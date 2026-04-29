@@ -225,6 +225,7 @@ export interface Database {
           end_date: string | null
           created_at: string
           entity_id: string | null
+          currency: string
         }
         Insert: {
           id?: string
@@ -241,6 +242,7 @@ export interface Database {
           end_date?: string | null
           created_at?: string
           entity_id?: string | null
+          currency?: string
         }
         Update: {
           id?: string
@@ -257,6 +259,7 @@ export interface Database {
           end_date?: string | null
           created_at?: string
           entity_id?: string | null
+          currency?: string
         }
         Relationships: []
       }

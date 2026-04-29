@@ -64,7 +64,9 @@ interface RosterEmployee {
   annual_salary: number | null
   hourly_rate: number | null
   hours_per_week: number | null
-  monthly_cost: number
+  currency: string
+  monthly_cost: number       // native currency
+  monthly_cost_usd: number   // FX-converted
   projects: string[]
   effective_date: string
   pending_bonus_count: number
@@ -606,7 +608,8 @@ function TeamRoster({ roster }: { roster: RosterEmployee[] }) {
       } else if (sortField === 'department') {
         cmp = (a.department ?? '').localeCompare(b.department ?? '')
       } else if (sortField === 'monthly_cost') {
-        cmp = a.monthly_cost - b.monthly_cost
+        // Sort in USD so different-currency rows order sensibly.
+        cmp = a.monthly_cost_usd - b.monthly_cost_usd
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
@@ -736,7 +739,14 @@ function TeamRoster({ roster }: { roster: RosterEmployee[] }) {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-[#c8d6e5] text-right tabular-nums">
-                    {formatCurrency(emp.monthly_cost)}
+                    <div className="flex flex-col items-end">
+                      <span>{formatCurrency(emp.monthly_cost, emp.currency)}</span>
+                      {emp.currency !== 'USD' && (
+                        <span className="text-[10px] text-[#566a7f] font-normal">
+                          ≈ {formatCurrency(emp.monthly_cost_usd, 'USD')}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-xs text-[#7b8fa3] max-w-[250px]">
                     {emp.projects.length > 0 ? emp.projects.join(', ') : (
@@ -757,7 +767,7 @@ function TeamRoster({ roster }: { roster: RosterEmployee[] }) {
             {deptFilter !== 'all' ? ` in ${deptFilter}` : ''}
           </span>
           <span className="text-xs font-semibold text-[#c8d6e5] tabular-nums">
-            Total: {formatCompactCurrency(sorted.reduce((s, e) => s + e.monthly_cost, 0))}/mo
+            Total: {formatCompactCurrency(sorted.reduce((s, e) => s + e.monthly_cost_usd, 0))}/mo USD
           </span>
         </div>
       )}

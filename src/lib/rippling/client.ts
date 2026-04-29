@@ -202,6 +202,16 @@ export function getWorkerHourlyRate(worker: RipplingWorker): number | null {
   return worker.compensation?.hourly_wage?.value ?? null
 }
 
+// Currency that the worker's compensation is denominated in. Prefers annual,
+// falls back to hourly. Returns 'USD' if neither carries a currency_type.
+export function getWorkerCompensationCurrency(worker: RipplingWorker): string {
+  return (
+    worker.compensation?.annual_compensation?.currency_type ??
+    worker.compensation?.hourly_wage?.currency_type ??
+    'USD'
+  ).toUpperCase()
+}
+
 export function getWorkerEmploymentType(worker: RipplingWorker): string | null {
   const et = worker.employment_type
   if (!et) return worker.employmentType ?? worker.employment_type_legacy ?? null
